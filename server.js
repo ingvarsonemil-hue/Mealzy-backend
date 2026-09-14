@@ -50,7 +50,7 @@ Generate exactly 21 meals: 7 days (Monday through Sunday), each with breakfast, 
   const userPrompt = `Weekly budget: ${weeklyBudget}. Household size: ${householdSize}. Dietary restrictions: ${dietaryRestrictions?.join(', ') || 'none'}. Cooking skill: ${cookingSkill}.`;
 
   const stream = anthropic.messages.stream({
-    model: 'claude-sonnet-5',
+    model: process.env.TEST_MODEL || 'claude-sonnet-5',
     max_tokens: 32000,
     system: systemPrompt,
     messages: [{ role: 'user', content: userPrompt }]
@@ -91,7 +91,7 @@ Generate one ${mealType} for ${dayOfWeek}, targeting approximately ${targetCost}
   const userPrompt = `Dietary restrictions: ${dietaryRestrictions?.join(', ') || 'none'}. Cooking skill: ${cookingSkill}.`;
 
   const response = await anthropic.messages.create({
-    model: 'claude-sonnet-5',
+    model: process.env.TEST_MODEL || 'claude-sonnet-5',
     max_tokens: 4000,
     system: systemPrompt,
     messages: [{ role: 'user', content: userPrompt }]
@@ -291,3 +291,4 @@ app.post('/api/meals/:mealId/swap', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Mealzy backend running on ${PORT}`));
+
