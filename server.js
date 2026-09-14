@@ -29,13 +29,19 @@ Schema:
       "day_of_week": "Monday",
       "meal_type": "breakfast",
       "name": "string",
-      "ingredients": [{ "name": "string", "quantity": "string", "estimated_cost": number }],
+      "ingredients": [{ "name": "string", "quantity": "string", "estimated_cost": number, "grocery_section": "string" }],
       "steps": ["string"],
       "estimated_cost": number,
       "macros": { "calories": number, "protein_g": number, "carbs_g": number, "fat_g": number }
     }
   ]
 }
+
+grocery_section must be one of: Produce, Dairy & Eggs, Meat & Seafood, Bakery, Pantry, Frozen, Other.
+
+All prices are in USD, reflecting typical US grocery store costs. All ingredient quantities use US customary units - cups, tsp, tbsp, lbs for solid weight, oz for smaller solid weight amounts, fl oz for liquids - never metric.
+
+This user is a broke young adult or student on a tight food budget - they are NOT looking for fine dining or premium ingredients. Favor cheap, filling staple ingredients: rice, pasta, beans, eggs, chicken thighs, ground beef, frozen vegetables, canned goods, oats, bread. Avoid expensive proteins (steak, lobster, tuna steaks, salmon fillets used repeatedly), avoid alcohol entirely, avoid restaurant-style desserts (tiramisu, creme brulee, cheesecake) - simple, cheap treats are fine occasionally (cookies, fruit) but should not be a recurring pattern across the week. Repetition of cheap core ingredients across multiple meals is GOOD, not a flaw - it is how real budget cooking works.
 
 Generate exactly 21 meals: 7 days (Monday through Sunday), each with breakfast, lunch, and dinner. All estimated_cost values must sum to approximately the weekly budget given. Keep recipes realistic for the stated cooking skill level.`;
 
@@ -113,7 +119,50 @@ app.post('/api/plans', async (req, res) => {
   }
 });
 
+app.post('/api/plans/:planId/shopping-list', async (req, res) => {
+  const { planId } = req.params;
+
+  const { data: meals, error: mealsError } = await supabase
+    .from('meals')
+    .select('ingredients')
+    .eq('plan_id', planId);
+
+  if (mealsError) {
+    console.log('SHOPPING LIST - MEALS FETCH ERROR:', mealsError);
+    return res.status(500).json({ error: 'Failed to fetch meals for plan' });
+  }
+
+  if (!meals || meals.length === 0) {
+    return res.status(404).json({ error: 'No meals found for this plan' });
+  }
+
+  const items = [];
+  for (const meal of meals) {
+    for (const ing of meal.ingredients) {
+      items.push({
+        plan_id: planId,
+        item_name: ing.name,
+        quantity: ing.quantity,
+        grocery_section: ing.grocery_section || 'Other',
+        estimated_cost: ing.estimated_cost,
+        is_checked: false
+      });
+    }
+  }
+
+  const { data: inserted, error: insertError } = await supabase
+    .from('shopping_list_items')
+    .insert(items)
+    .select();
+
+  if (insertError) {
+    console.log('SHOPPING LIST - INSERT ERROR:', insertError);
+    return res.status(500).json({ error: 'Failed to save shopping list' });
+  }
+
+  res.json({ items: inserted });
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Mealzy backend running on ${PORT}`));
-
 
