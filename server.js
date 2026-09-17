@@ -788,5 +788,81 @@ app.post('/api/meals/:mealId/swap', async (req, res) => {
   res.json({ meal: updated });
 });
 
+// Receives subscription lifecycle events from RevenueCat and syncs
+// profiles.is_pro accordingly. See the RevenueCat dashboard's Webhooks
+// integration settings to set REVENUECAT_WEBHOOK_AUTH to the same value
+// configured there, and REVENUECAT_ENTITLEMENT_ID to the entitlement's
+// actual identifier (not necessarily the display name "Mealzy Pro" shown
+// in the dashboard - check the entitlement's settings for its identifier).
+app.post('/api/webhooks/revenuecat', async (req, res) => {
+  const authHeader = req.headers['authorization'];
+  if (authHeader !== process.env.REVENUECAT_WEBHOOK_AUTH) {
+    console.log('REVENUECAT WEBHOOK - REJECTED: bad or missing auth header');
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+
+  const event = req.body?.event;
+  if (!event || !event.id || !event.type || !event.app_user_id) {
+    console.log('REVENUECAT WEBHOOK - malformed payload:', JSON.stringify(req.body));
+    // Still 200 - RevenueCat isn't going to fix a malformed payload by
+    // retrying, so there's no point asking it to.
+    return res.status(200).json({ ok: true, note: 'malformed payload, ignored' });
+  }
+
+  // Idempotency: RevenueCat can redeliver the same event more than once.
+  // Check-then-insert isn't perfectly race-proof under true concurrency,
+  // but webhook deliveries for the same event.id arriving simultaneously
+  // is an extreme edge case, not a realistic concern here - unlike the
+  // meal-swap claim, which genuinely needed a single atomic statement.
+  const { data: existing } = await supabase
+    .from('processed_webhook_events')
+    .select('event_id')
+    .eq('event_id', event.id)
+    .maybeSingle();
+
+  if (existing) {
+    console.log('REVENUECAT WEBHOOK - duplicate, already processed:', event.id);
+    return res.status(200).json({ ok: true, duplicate: true });
+  }
+
+  const entitlementId = process.env.REVENUECAT_ENTITLEMENT_ID;
+  const affectsOurEntitlement = Array.isArray(event.entitlement_ids)
+    && event.entitlement_ids.includes(entitlementId);
+
+  // CANCELLATION deliberately does NOT revoke access here - a cancelled
+  // subscription still has active access until it actually expires.
+  // Revoking on CANCELLATION would cut someone off early, before the
+  // period they already paid for has ended. Only EXPIRATION revokes.
+  const GRANT_EVENTS = ['INITIAL_PURCHASE', 'RENEWAL', 'UNCANCELLATION', 'PRODUCT_CHANGE', 'NON_RENEWING_PURCHASE'];
+  const REVOKE_EVENTS = ['EXPIRATION'];
+
+  let newIsPro = null;
+  if (affectsOurEntitlement && GRANT_EVENTS.includes(event.type)) newIsPro = true;
+  else if (affectsOurEntitlement && REVOKE_EVENTS.includes(event.type)) newIsPro = false;
+
+  if (newIsPro !== null) {
+    const { error: updateError } = await supabase
+      .from('profiles')
+      .update({ is_pro: newIsPro })
+      .eq('id', event.app_user_id);
+
+    if (updateError) {
+      console.log('REVENUECAT WEBHOOK - profile update failed:', updateError, 'for app_user_id:', event.app_user_id);
+      // Note: this most likely means event.app_user_id doesn't match any
+      // profiles.id - see the RevenueCat SDK configuration note about
+      // setting app_user_id to the real Supabase user ID, not letting
+      // RevenueCat assign its own anonymous one.
+    } else {
+      console.log(`REVENUECAT WEBHOOK - ${event.type}: set is_pro=${newIsPro} for user ${event.app_user_id}`);
+    }
+  } else {
+    console.log(`REVENUECAT WEBHOOK - ${event.type} received, no is_pro change needed (entitlement mismatch or non-actionable event type)`);
+  }
+
+  await supabase.from('processed_webhook_events').insert({ event_id: event.id });
+
+  res.status(200).json({ ok: true });
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Mealzy backend running on ${PORT}`));
