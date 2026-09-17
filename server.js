@@ -796,6 +796,15 @@ app.post('/api/meals/:mealId/swap', async (req, res) => {
 // in the dashboard - check the entitlement's settings for its identifier).
 app.post('/api/webhooks/revenuecat', async (req, res) => {
   const authHeader = req.headers['authorization'];
+  // Fail closed: if the secret itself isn't configured, reject everything
+  // rather than let an unset env var silently pass an undefined === undefined
+  // comparison. A missing config is a server problem to fix, not a reason
+  // to accept unauthenticated requests.
+  if (!process.env.REVENUECAT_WEBHOOK_AUTH) {
+    console.log('REVENUECAT WEBHOOK - REJECTED: REVENUECAT_WEBHOOK_AUTH is not set on this server');
+    return res.status(500).json({ error: 'webhook not configured' });
+  }
+
   if (authHeader !== process.env.REVENUECAT_WEBHOOK_AUTH) {
     console.log('REVENUECAT WEBHOOK - REJECTED: bad or missing auth header');
     return res.status(401).json({ error: 'unauthorized' });
